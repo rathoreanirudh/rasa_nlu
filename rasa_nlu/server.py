@@ -22,6 +22,8 @@ from rasa_nlu.data_router import (
 from rasa_nlu.train import TrainingException
 from rasa_nlu.utils import json_to_string
 from rasa_nlu.version import __version__
+from rasa_nlu.conversation_module.conversation import call_converse
+from rasa_nlu.conversation_module.mongo_connector import MongoConnector
 
 logger = logging.getLogger(__name__)
 
@@ -192,6 +194,11 @@ class RasaNLU(object):
         self.cors_origins = cors_origins if cors_origins else ["*"]
         self.access_token = token
         reactor.suggestThreadPoolSize(num_threads * 5)
+        self.db_connector = self.create_db_connector()
+
+    def create_db_connector(self):
+        if self.config["db_connect"] == "mongo":
+            return MongoConnector(self.config["db_url"], self.config["db_name"])
 
     @staticmethod
     def _load_default_config(path):
@@ -369,6 +376,44 @@ class RasaNLU(object):
             logger.exception(e)
             return simplejson.dumps({"error": "{}".format(e)})
 
+
+
+
+    @app.route("/converse", methods=['GET', 'POST'])
+    @requires_auth
+    @check_cors
+    @inlineCallbacks
+    def converse(self, request):
+        """Conversation module"""
+        request.setHeader('Content-Type', 'application/json')
+        if request.method.decode('utf-8', 'strict') == 'GET':
+            request_params = {key.decode('utf-8', 'strict'): value[0].decode('utf-8', 'strict')
+                               for key, value in request.args.items()}
+        else:
+            request_params = simplejson.loads(
+                request.content.read().decode('utf-8', 'strict'))
+        if 'query' in request_params:
+            request_params['q'] = request_params.pop('query')
+
+        if 'q' not in request_params:
+            request.setResponseCode(404)
+            dumped = simplejson.dumps({
+                "error": "Invalid parse parameter specified"})
+            returnValue(dumped)
+        elif 'conv_id' not in request_params:
+            request.setResponseCode(404)
+            dumped = simplejson.dumps({
+                "error": "Invalid parse parameter specified"})
+            returnValue(dumped)
+        elif 'project' not in request_params:
+            request.setResponseCode(404)
+            dumped = simplejson.dumps({
+                "error": "Invalid parse parameter specified"})
+            returnValue(dumped)
+        else:
+            response = yield (call_converse(request_params, self) if self._testing
+                            else threads.deferToThread(call_converse, request_params, self))
+            returnValue(response)
 
 if __name__ == '__main__':
     # Running as standalone python application
